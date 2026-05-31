@@ -17,7 +17,16 @@ const canvas = document.getElementById('gameCanvas');
 const ctx = canvas.getContext('2d');
 canvas.width = window.innerWidth; canvas.height = window.innerHeight;
 
-let gameState = 'MENU', player = {x: 200, y: 200, hp: 100}, enemies = [], bullets = [], wave = 1, enemiesToSpawn = 5;
+let gameState = 'MENU';
+let player = {x: 200, y: 200, hp: 100, ammo: 50, maxAmmo: 50};
+let enemies = [], bullets = [], ammoDrops = [], wave = 1, enemiesToSpawn = 5;
+
+// Define Obstacles (Walls)
+let walls = [
+    {x: canvas.width * 0.2, y: canvas.height * 0.2, w: 200, h: 30},
+    {x: canvas.width * 0.2, y: canvas.height * 0.8, w: 200, h: 30},
+    {x: canvas.width * 0.7, y: canvas.height * 0.3, w: 30, h: canvas.height * 0.4}
+];
 
 // Joystick and Keyboard Setup
 let joystick = {x: 100, y: canvas.height - 100, rad: 50, knobX: 100, knobY: canvas.height - 100, active: false, id: null};
@@ -27,7 +36,8 @@ window.addEventListener('keydown', e => keys[e.code] = true);
 window.addEventListener('keyup', e => keys[e.code] = false);
 
 function startGame() {
-    wave = 1; player.hp = 100; enemies = []; bullets = [];
+    wave = 1; player.hp = 100; player.ammo = 50; 
+    enemies = []; bullets = []; ammoDrops = [];
     player.x = canvas.width / 2; player.y = canvas.height / 2;
     document.getElementById('uiLayer').style.display = 'none';
     gameState = 'PLAYING';
@@ -37,15 +47,22 @@ function startGame() {
 function spawnWave() {
     enemiesToSpawn = 5 + (wave * 2);
     for(let i = 0; i < enemiesToSpawn; i++) {
-        enemies.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height, hp: 100, maxHp: 100});
+        enemies.push({x: Math.random()*canvas.width, y: -50, hp: 100, maxHp: 100});
     }
 }
 
-// Multitouch Input Handling
+// AABB Collision Helper
+function hitWall(x, y, size) {
+    for(let w of walls) {
+        if(x < w.x + w.w && x + size > w.x && y < w.y + w.h && y + size > w.y) return true;
+    }
+    return false;
+}
+
+// Input Handling
 canvas.addEventListener('pointerdown', (e) => {
     if(gameState !== 'PLAYING') return;
     
-    // Check if touch is near the joystick
     let dist = Math.hypot(e.clientX - joystick.x, e.clientY - joystick.y);
     if(dist < 100) {
         joystick.active = true;
@@ -53,25 +70,21 @@ canvas.addEventListener('pointerdown', (e) => {
         joystick.knobX = e.clientX;
         joystick.knobY = e.clientY;
     } else {
-        // Otherwise, shoot towards the tap/click
-        let angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
-        bullets.push({x: player.x + 15, y: player.y + 15, vx: Math.cos(angle)*10, vy: Math.sin(angle)*10});
+        if(player.ammo > 0) {
+            player.ammo--;
+            let angle = Math.atan2(e.clientY - (player.y + 15), e.clientX - (player.x + 15));
+            bullets.push({x: player.x + 15, y: player.y + 15, vx: Math.cos(angle)*10, vy: Math.sin(angle)*10});
+        }
     }
 });
 
 canvas.addEventListener('pointermove', (e) => {
     if(gameState !== 'PLAYING') return;
-    // Move joystick knob if this pointer is the joystick touch
     if(joystick.active && e.pointerId === joystick.id) {
         let dx = e.clientX - joystick.x;
         let dy = e.clientY - joystick.y;
         let dist = Math.hypot(dx, dy);
-        
-        // Constrain knob to joystick radius
-        if(dist > joystick.rad) {
-            dx = (dx/dist) * joystick.rad;
-            dy = (dy/dist) * joystick.rad;
-        }
+        if(dist > joystick.rad) { dx = (dx/dist) * joystick.rad; dy = (dy/dist) * joystick.rad; }
         joystick.knobX = joystick.x + dx;
         joystick.knobY = joystick.y + dy;
     }
@@ -79,10 +92,8 @@ canvas.addEventListener('pointermove', (e) => {
 
 function resetJoystick(e) {
     if(e.pointerId === joystick.id) {
-        joystick.active = false;
-        joystick.id = null;
-        joystick.knobX = joystick.x;
-        joystick.knobY = joystick.y;
+        joystick.active = false; joystick.id = null;
+        joystick.knobX = joystick.x; joystick.knobY = joystick.y;
     }
 }
 canvas.addEventListener('pointerup', resetJoystick);
@@ -91,43 +102,65 @@ canvas.addEventListener('pointercancel', resetJoystick);
 function update() {
     if (gameState === 'PLAYING') {
         
-        // Movement: Keyboard
+        let prevX = player.x; let prevY = player.y;
         let speed = 5;
+        
+        // Movement: Keyboard & Joystick
         if(keys['KeyW'] || keys['ArrowUp']) player.y -= speed;
         if(keys['KeyS'] || keys['ArrowDown']) player.y += speed;
         if(keys['KeyA'] || keys['ArrowLeft']) player.x -= speed;
         if(keys['KeyD'] || keys['ArrowRight']) player.x += speed;
+        if(joystick.active) { player.x += (joystick.knobX - joystick.x) / 10; player.y += (joystick.knobY - joystick.y) / 10; }
 
-        // Movement: Joystick
-        if(joystick.active) {
-            player.x += (joystick.knobX - joystick.x) / 10;
-            player.y += (joystick.knobY - joystick.y) / 10;
-        }
-
-        // Keep player inside the screen
+        // Screen Boundaries & Wall Collisions for Player
         player.x = Math.max(0, Math.min(canvas.width - 30, player.x));
         player.y = Math.max(0, Math.min(canvas.height - 30, player.y));
+        if(hitWall(player.x, prevY, 30)) player.x = prevX;
+        if(hitWall(prevX, player.y, 30)) player.y = prevY;
 
         // Enemy Logic
         enemies.forEach((e, ei) => {
-            let angle = Math.atan2(player.y - e.y, player.x - e.x);
+            let angle = Math.atan2((player.y + 15) - (e.y + 10), (player.x + 15) - (e.x + 10));
+            let ePrevX = e.x, ePrevY = e.y;
+            
             e.x += Math.cos(angle) * (1 + wave * 0.1); 
+            if(hitWall(e.x, ePrevY, 20)) e.x = ePrevX;
+            
             e.y += Math.sin(angle) * (1 + wave * 0.1);
-            if(Math.hypot(player.x - e.x, player.y - e.y) < 30) player.hp -= 0.2;
+            if(hitWall(ePrevX, e.y, 20)) e.y = ePrevY;
+
+            if(Math.hypot((player.x+15) - (e.x+10), (player.y+15) - (e.y+10)) < 30) player.hp -= 0.2;
         });
 
         // Bullet Logic
-        bullets.forEach((b, bi) => {
+        for(let bi = bullets.length - 1; bi >= 0; bi--) {
+            let b = bullets[bi];
             b.x += b.vx; b.y += b.vy;
-            enemies.forEach((e, ei) => {
-                if(Math.hypot(b.x - e.x, b.y - e.y) < 20) {
-                    e.hp -= 50; bullets.splice(bi, 1);
-                    if(e.hp <= 0) enemies.splice(ei, 1);
-                }
-            });
-        });
+            
+            if(hitWall(b.x, b.y, 8)) { bullets.splice(bi, 1); continue; }
 
-        // Wave & Game Over Checks
+            for(let ei = enemies.length - 1; ei >= 0; ei--) {
+                let e = enemies[ei];
+                if(Math.hypot(b.x - (e.x+10), b.y - (e.y+10)) < 20) {
+                    e.hp -= 50; bullets.splice(bi, 1);
+                    if(e.hp <= 0) {
+                        ammoDrops.push({x: e.x + 10, y: e.y + 10});
+                        enemies.splice(ei, 1);
+                    }
+                    break;
+                }
+            }
+        }
+
+        // Ammo Pickup Logic
+        for(let ai = ammoDrops.length - 1; ai >= 0; ai--) {
+            let a = ammoDrops[ai];
+            if(Math.hypot((player.x+15) - a.x, (player.y+15) - a.y) < 25) {
+                player.ammo = Math.min(player.maxAmmo, player.ammo + 10);
+                ammoDrops.splice(ai, 1);
+            }
+        }
+
         if(enemies.length === 0) {
             wave++;
             if(wave > 10) { gameState = 'OVER'; document.getElementById('title').innerText = "YOU WIN!"; document.getElementById('uiLayer').style.display = 'flex'; }
@@ -136,32 +169,69 @@ function update() {
         if(player.hp <= 0) { gameState = 'OVER'; document.getElementById('title').innerText = "GAME OVER"; document.getElementById('uiLayer').style.display = 'flex'; }
     }
 
-    // DRAWING
+    // DRAWING //
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     
-    // Draw Joystick
-    if (gameState === 'PLAYING') {
-        ctx.fillStyle = 'rgba(255,255,255,0.2)';
-        ctx.beginPath(); ctx.arc(joystick.x, joystick.y, joystick.rad, 0, Math.PI*2); ctx.fill();
-        ctx.fillStyle = 'rgba(255,255,255,0.8)';
-        ctx.beginPath(); ctx.arc(joystick.knobX, joystick.knobY, 20, 0, Math.PI*2); ctx.fill();
-    }
-
-    // Draw Player
-    ctx.fillStyle = '#00ffcc'; ctx.fillRect(player.x, player.y, 30, 30);
-    
-    // Draw Enemies & Health Bars
-    enemies.forEach(e => {
-        ctx.fillStyle = '#ff3366'; ctx.fillRect(e.x, e.y, 20, 20);
-        ctx.fillStyle = 'red'; ctx.fillRect(e.x, e.y - 10, 20, 5);
-        ctx.fillStyle = 'lime'; ctx.fillRect(e.x, e.y - 10, 20 * (e.hp/e.maxHp), 5);
+    // Draw Walls
+    ctx.fillStyle = '#444';
+    walls.forEach(w => {
+        ctx.fillRect(w.x, w.y, w.w, w.h);
+        ctx.strokeStyle = '#222'; ctx.lineWidth = 2; ctx.strokeRect(w.x, w.y, w.w, w.h);
     });
 
-    // Draw Bullets & UI
-    ctx.fillStyle = 'yellow'; bullets.forEach(b => ctx.fillRect(b.x, b.y, 8, 8));
-    ctx.fillStyle = 'white'; 
-    ctx.font = "20px Arial";
-    ctx.fillText("WAVE: " + wave + " | HP: " + Math.floor(player.hp), 10, 30);
+    // Draw Ammo Drops
+    ammoDrops.forEach(a => {
+        ctx.fillStyle = '#00ffff'; ctx.fillRect(a.x - 5, a.y - 5, 10, 10);
+        ctx.strokeStyle = '#fff'; ctx.lineWidth = 1; ctx.strokeRect(a.x - 5, a.y - 5, 10, 10);
+    });
+
+    // Draw Joystick
+    if (gameState === 'PLAYING') {
+        ctx.fillStyle = 'rgba(255,255,255,0.1)'; ctx.beginPath(); ctx.arc(joystick.x, joystick.y, joystick.rad, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.beginPath(); ctx.arc(joystick.knobX, joystick.knobY, 20, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Draw Player (Sci-fi Character)
+    ctx.save();
+    ctx.translate(player.x + 15, player.y + 15);
+    ctx.fillStyle = '#00ffcc'; ctx.beginPath(); ctx.arc(0, 0, 15, 0, Math.PI*2); ctx.fill();
+    ctx.strokeStyle = '#009999'; ctx.lineWidth = 3; ctx.stroke();
+    ctx.fillStyle = '#222'; ctx.fillRect(-8, -12, 16, 8); // Visor
+    ctx.restore();
+    
+    // Draw Enemies (Spiky Spinning Stars) & Health Bars
+    enemies.forEach((e, ei) => {
+        ctx.save();
+        ctx.translate(e.x + 10, e.y + 10);
+        ctx.rotate(Date.now() / 200 + ei); // Animation spin
+        ctx.fillStyle = '#ff3366';
+        ctx.fillRect(-10, -10, 20, 20);
+        ctx.rotate(Math.PI/4);
+        ctx.fillRect(-10, -10, 20, 20);
+        ctx.fillStyle = '#000'; ctx.beginPath(); ctx.arc(0, 0, 5, 0, Math.PI*2); ctx.fill(); // Core eye
+        ctx.restore();
+
+        // Enemy HP
+        ctx.fillStyle = 'red'; ctx.fillRect(e.x, e.y - 15, 20, 5);
+        ctx.fillStyle = 'lime'; ctx.fillRect(e.x, e.y - 15, 20 * (e.hp/e.maxHp), 5);
+    });
+
+    // Draw Bullets
+    ctx.fillStyle = 'yellow'; bullets.forEach(b => { ctx.beginPath(); ctx.arc(b.x, b.y, 4, 0, Math.PI*2); ctx.fill(); });
+    
+    // Draw UI Elements (Wave, HP, Ammo)
+    ctx.fillStyle = 'white'; ctx.font = "bold 20px Arial";
+    ctx.fillText("WAVE: " + wave, 10, 30);
+    
+    // HP Bar
+    ctx.fillStyle = 'gray'; ctx.fillRect(100, 15, 150, 15);
+    ctx.fillStyle = 'lime'; ctx.fillRect(100, 15, 150 * (Math.max(0, player.hp)/100), 15);
+    ctx.fillStyle = 'white'; ctx.fillText("HP", 260, 28);
+    
+    // Ammo Bar
+    ctx.fillStyle = 'gray'; ctx.fillRect(100, 35, 150, 10);
+    ctx.fillStyle = 'cyan'; ctx.fillRect(100, 35, 150 * (player.ammo/player.maxAmmo), 10);
+    ctx.fillStyle = 'white'; ctx.font = "bold 14px Arial"; ctx.fillText("AMMO: " + player.ammo, 260, 45);
     
     requestAnimationFrame(update);
 }

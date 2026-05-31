@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html>
+<body style="margin: 0; overflow: hidden; background: #1a1a1a; touch-action: none;">
+
+    <div id="uiLayer" style="position: absolute; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; background: rgba(0,0,0,0.8); color: white; z-index: 10;">
+        <div style="text-align: center;">
+            <h1 id="title">MONSTER ARENA</h1>
+            <p id="subtext">Survive 10 Waves</p>
+            <button onclick="startGame()" style="padding: 20px 40px; font-size: 24px; cursor: pointer;">START</button>
+        </div>
+    </div>
+
+    <canvas id="gameCanvas"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth; canvas.height = window.innerHeight;
+
+let gameState = 'MENU', player = {x: 200, y: 200, hp: 100}, enemies = [], bullets = [], wave = 1, enemiesToSpawn = 5;
+
+// Joystick and Keyboard Setup
+let joystick = {x: 100, y: canvas.height - 100, rad: 50, knobX: 100, knobY: canvas.height - 100, active: false, id: null};
+const keys = {};
+
+window.addEventListener('keydown', e => keys[e.code] = true);
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+function startGame() {
+    wave = 1; player.hp = 100; enemies = []; bullets = [];
+    player.x = canvas.width / 2; player.y = canvas.height / 2;
+    document.getElementById('uiLayer').style.display = 'none';
+    gameState = 'PLAYING';
+    spawnWave();
+}
+
+function spawnWave() {
+    enemiesToSpawn = 5 + (wave * 2);
+    for(let i = 0; i < enemiesToSpawn; i++) {
+        enemies.push({x: Math.random()*canvas.width, y: Math.random()*canvas.height, hp: 100, maxHp: 100});
+    }
+}
+
+// Multitouch Input Handling
+canvas.addEventListener('pointerdown', (e) => {
+    if(gameState !== 'PLAYING') return;
+    
+    // Check if touch is near the joystick
+    let dist = Math.hypot(e.clientX - joystick.x, e.clientY - joystick.y);
+    if(dist < 100) {
+        joystick.active = true;
+        joystick.id = e.pointerId;
+        joystick.knobX = e.clientX;
+        joystick.knobY = e.clientY;
+    } else {
+        // Otherwise, shoot towards the tap/click
+        let angle = Math.atan2(e.clientY - player.y, e.clientX - player.x);
+        bullets.push({x: player.x + 15, y: player.y + 15, vx: Math.cos(angle)*10, vy: Math.sin(angle)*10});
+    }
+});
+
+canvas.addEventListener('pointermove', (e) => {
+    if(gameState !== 'PLAYING') return;
+    // Move joystick knob if this pointer is the joystick touch
+    if(joystick.active && e.pointerId === joystick.id) {
+        let dx = e.clientX - joystick.x;
+        let dy = e.clientY - joystick.y;
+        let dist = Math.hypot(dx, dy);
+        
+        // Constrain knob to joystick radius
+        if(dist > joystick.rad) {
+            dx = (dx/dist) * joystick.rad;
+            dy = (dy/dist) * joystick.rad;
+        }
+        joystick.knobX = joystick.x + dx;
+        joystick.knobY = joystick.y + dy;
+    }
+});
+
+function resetJoystick(e) {
+    if(e.pointerId === joystick.id) {
+        joystick.active = false;
+        joystick.id = null;
+        joystick.knobX = joystick.x;
+        joystick.knobY = joystick.y;
+    }
+}
+canvas.addEventListener('pointerup', resetJoystick);
+canvas.addEventListener('pointercancel', resetJoystick);
+
+function update() {
+    if (gameState === 'PLAYING') {
+        
+        // Movement: Keyboard
+        let speed = 5;
+        if(keys['KeyW'] || keys['ArrowUp']) player.y -= speed;
+        if(keys['KeyS'] || keys['ArrowDown']) player.y += speed;
+        if(keys['KeyA'] || keys['ArrowLeft']) player.x -= speed;
+        if(keys['KeyD'] || keys['ArrowRight']) player.x += speed;
+
+        // Movement: Joystick
+        if(joystick.active) {
+            player.x += (joystick.knobX - joystick.x) / 10;
+            player.y += (joystick.knobY - joystick.y) / 10;
+        }
+
+        // Keep player inside the screen
+        player.x = Math.max(0, Math.min(canvas.width - 30, player.x));
+        player.y = Math.max(0, Math.min(canvas.height - 30, player.y));
+
+        // Enemy Logic
+        enemies.forEach((e, ei) => {
+            let angle = Math.atan2(player.y - e.y, player.x - e.x);
+            e.x += Math.cos(angle) * (1 + wave * 0.1); 
+            e.y += Math.sin(angle) * (1 + wave * 0.1);
+            if(Math.hypot(player.x - e.x, player.y - e.y) < 30) player.hp -= 0.2;
+        });
+
+        // Bullet Logic
+        bullets.forEach((b, bi) => {
+            b.x += b.vx; b.y += b.vy;
+            enemies.forEach((e, ei) => {
+                if(Math.hypot(b.x - e.x, b.y - e.y) < 20) {
+                    e.hp -= 50; bullets.splice(bi, 1);
+                    if(e.hp <= 0) enemies.splice(ei, 1);
+                }
+            });
+        });
+
+        // Wave & Game Over Checks
+        if(enemies.length === 0) {
+            wave++;
+            if(wave > 10) { gameState = 'OVER'; document.getElementById('title').innerText = "YOU WIN!"; document.getElementById('uiLayer').style.display = 'flex'; }
+            else spawnWave();
+        }
+        if(player.hp <= 0) { gameState = 'OVER'; document.getElementById('title').innerText = "GAME OVER"; document.getElementById('uiLayer').style.display = 'flex'; }
+    }
+
+    // DRAWING
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Draw Joystick
+    if (gameState === 'PLAYING') {
+        ctx.fillStyle = 'rgba(255,255,255,0.2)';
+        ctx.beginPath(); ctx.arc(joystick.x, joystick.y, joystick.rad, 0, Math.PI*2); ctx.fill();
+        ctx.fillStyle = 'rgba(255,255,255,0.8)';
+        ctx.beginPath(); ctx.arc(joystick.knobX, joystick.knobY, 20, 0, Math.PI*2); ctx.fill();
+    }
+
+    // Draw Player
+    ctx.fillStyle = '#00ffcc'; ctx.fillRect(player.x, player.y, 30, 30);
+    
+    // Draw Enemies & Health Bars
+    enemies.forEach(e => {
+        ctx.fillStyle = '#ff3366'; ctx.fillRect(e.x, e.y, 20, 20);
+        ctx.fillStyle = 'red'; ctx.fillRect(e.x, e.y - 10, 20, 5);
+        ctx.fillStyle = 'lime'; ctx.fillRect(e.x, e.y - 10, 20 * (e.hp/e.maxHp), 5);
+    });
+
+    // Draw Bullets & UI
+    ctx.fillStyle = 'yellow'; bullets.forEach(b => ctx.fillRect(b.x, b.y, 8, 8));
+    ctx.fillStyle = 'white'; 
+    ctx.font = "20px Arial";
+    ctx.fillText("WAVE: " + wave + " | HP: " + Math.floor(player.hp), 10, 30);
+    
+    requestAnimationFrame(update);
+}
+update();
+</script>
+</body>
+</html>
